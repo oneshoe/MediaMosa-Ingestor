@@ -1,0 +1,315 @@
+<?php
+// $Id: ingestor.module 248 2011-11-25 14:10:03Z joris.vaneijden $
+
+/**
+ * @file
+ * Ingestor module
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function ingestor_menu() {
+  $items = array();
+
+  $items['ingestor'] = array(
+    'title' => 'Upload to Ingestor',
+    'description' => 'Upload files for Ingestor to process.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('ingestor_upload_form'),
+    'access arguments' => array('upload files to ingestor'),
+  );
+
+  $items['ingestor/upload/%'] = array(
+    'page callback' => 'ingestor_handle_upload',
+    'page arguments' => array(2),
+    'access arguments' => array('upload files to ingestor'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['ingestor/process'] = array(
+    'title' => 'Process',
+    'description' => 'Process the next item in the queue.',
+    'page callback' => 'ingestor_process_queue_item',
+    'access arguments' => array('process ingestor queue'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/config/media/ingestor'] = array(
+    'title' => 'Ingestor',
+    'description' => 'Configure Ingestor and transcoding profiles.',
+    'page callback' => 'drupal_get_form',
+    'file' => 'ingestor.admin.inc',
+    'page arguments' => array('ingestor_settings_form'),
+    'access arguments' => array('administer ingestor'),
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function ingestor_permission() {
+  return array(
+    'administer ingestor' => array(
+      'title' => t('Configure ingestors'),
+      'description' => t('Set Ingestor settings and transcoding profiles.'),
+    ),
+    'process ingestor queue' => array(
+      'title' => t('Initiate queue processing manually'),
+      'description' => t('Allow manual initiation of Ingestor queue processing.'),
+    ),
+    'upload files to ingestor' => array(
+      'title' => t('Upload files to the ingestor'),
+      'description' => t('Allow the user to upload files to the Ingestor for processing.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_cron().
+ */
+function ingestor_cron() {
+  ingestor_process_queue_item();
+}
+
+/**
+ * Renders a table displaying the queue status.
+ */
+function ingestor_queue_status() {
+  $rows = array();
+  $result = db_query("SELECT item_id, data, expire, created FROM {queue} WHERE name = :name ORDER BY item_id",
+    array(':name' => 'ingestor_jobs'),
+    array('fetch' => PDO::FETCH_ASSOC));
+
+  foreach ($result as $item) {
+    if ($item['expire'] > 0) {
+      $item['expire'] = t("Claimed: expires %expire", array('%expire' => date('r', $item['expire'])));
+    }
+    else {
+      $item['expire'] = t('Unclaimed');
+    }
+    $item['created'] = date('r', $item['created']);
+    $item['content'] = check_plain(print_r(unserialize($item['data']), TRUE));
+    unset($item['data']);
+    $rows[] = $item;
+  }
+
+  if (!empty($rows)) {
+    $header = array(t('Item ID'), t('Claimed/Expiration'), t('Created'), t('Content/Data'));
+    $output = theme('table', array('header' => $header, 'rows' => $rows));
+
+    if (user_access('process ingestor queue')) {
+      $output .= l(t('Process now'), 'ingestor/process');
+    }
+  }
+  else {
+    $output = t('There are no items in the queue.');
+  }
+  return $output;
+}
+
+/**
+ * Form for uploading a file, any file, that could be handled by one of the
+ * sub-modules implementing hook_ingestor_compatible_item().
+ */
+function ingestor_upload_form() {
+  $form = array();
+
+  // Show the existing jobs.
+  $form['status_fieldset'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Queue status'),
+    '#collapsible' => TRUE,
+  );
+  $form['status_fieldset']['status'] = array(
+    '#type' => 'markup',
+    '#markup' => ingestor_queue_status(),
+  );
+
+  $form['upload'] = array(
+    '#type' => 'file',
+    '#title' => t('Upload'),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Upload'),
+  );
+
+  return $form;
+}
+
+/**
+ * Form validation for the ingestor_upload_form().
+ */
+function ingestor_upload_form_validate($form, &$form_state) {
+  $validators = array(
+    'file_validate_extensions' => array('zip xml'),
+  );
+  $file = file_save_upload('upload', $validators);
+  $form_state['values']['upload'] = $file;
+}
+
+/**
+ * Submit handling for the ingestor_upload_form().
+ */
+function ingestor_upload_form_submit($form, &$form_state) {
+  // Dump the uploaded file reference in our queue.
+  $queue = DrupalQueue::get('ingestor_jobs', TRUE);
+  $queue->createItem($form_state['values']['upload']);
+  drupal_set_message(t('Your file has been added to the queue as item nr @nr', array('@nr' => $queue->numberOfItems())));
+}
+
+/**
+ * Handles file uploads from machines.
+ */
+function ingestor_handle_upload($source) {
+  $validators = array(
+    'file_validate_extensions' => array('zip xml'),
+  );
+  $file = file_save_upload($source, $validators);
+  if ($file) {
+    // Dump the uploaded file reference in our queue.
+    $queue = DrupalQueue::get('ingestor_jobs', TRUE);
+    $queue->createItem($file);
+    ob_end_clean();
+    print t('Your file has been added to the queue as item nr @nr', array('@nr' => $queue->numberOfItems()));
+    exit;
+  }
+  $messages = drupal_get_messages('error');
+  ob_end_clean();
+  foreach ($messages as $message) {
+    print $message . PHP_EOL;
+  }
+  if (empty($messages)) {
+    print 'error' . PHP_EOL;
+  }
+  exit;
+}
+
+/**
+ * Get a file from the queue and process it.
+ * @TODO: ensure keeping jobs and filesystem in sync. Cleanup after errors if needed.
+ */
+function ingestor_process_queue_item() {
+  // Get an item to process.
+  $queue = DrupalQueue::get('ingestor_jobs');
+  $item = $queue->claimItem(6000); // Jobs will be claimed for one hour.
+  if (empty($item)) {
+    return '';  // Nothing to do.
+  }
+  if (file_exists($item->data->uri)) {
+    watchdog('Ingestor', 'Job @job_id: Starting job.', array(
+      '@job_id' => $item->item_id,
+    ), WATCHDOG_INFO);
+    $type = ingestor_determine_export_type($item);
+    $file = $item->data;
+    if ($type === FALSE) {
+      watchdog('Ingestor', 'Job @job_id: Failed to determine ingestor for file @file, deleting it.', array(
+        '@job_id' => $item->item_id,
+        '@file' => $item->data->uri,
+      ), WATCHDOG_WARNING);
+      // There is no ingestor available for this file so get rid of it.
+      file_delete($file);
+      $queue->deleteItem($item);
+    }
+    else {
+      // Get an ingestor to deal with this file
+      $ingestor = Ingestor::get($type, $item);
+      // Let it parse the files.
+      $ingestor->parse();
+      // Let it upload the result.
+      $ingestor->upload();
+
+      if ($ingestor->status !== Ingestor::STATUS_FAILED) {
+        watchdog('Ingestor', 'Job @job_id: Job completed successfully.', array(
+          '@job_id' => $item->item_id,
+        ), WATCHDOG_INFO);
+        $queue->deleteItem($item);
+      }
+      else {
+        watchdog('Ingestor', 'Job @job_id: Job failed.', array(
+          '@job_id' => $item->item_id,
+        ), WATCHDOG_WARNING);
+        $queue->deleteItem($item);
+      }
+    }
+    $queue->releaseItem($item);
+  }
+  else {
+    watchdog('Ingestor', 'Job @job_id: File @file specified in job does not exist.', array(
+      '@job_id' => $item->item_id,
+      '@file' => $item->data->uri,
+    ), WATCHDOG_ERROR);
+    $queue->deleteItem($item);
+  }
+  return '';
+}
+
+/**
+ * Determine ingestor type based on a file and the available ingestors.
+ *
+ * @param object $file
+ */
+function ingestor_determine_export_type($item) {
+  watchdog('Ingestor', 'Job @job_id: Trying to determine export type.', array(
+    '@job_id' => $item->item_id,
+  ), WATCHDOG_INFO);
+
+  // Ask all ingestors if they can handle this item.
+  $ingestors = module_invoke_all('ingestor_compatible_item', $item);
+  $ingestors = array_filter($ingestors);
+
+  if (empty($ingestors)) {
+    watchdog('Ingestor', 'Job @job_id: No compatible ingestors found.', array(
+      '@job_id' => $item->item_id,
+    ), WATCHDOG_NOTICE);
+    return FALSE;
+  }
+
+  // Take the top ingestor.
+  $ingestor_class = reset($ingestors);
+  watchdog('Ingestor', 'Job @job_id: Determined export type to be @type.', array(
+    '@job_id' => $item->item_id,
+    '@type' => $ingestor_class,
+  ), WATCHDOG_INFO);
+  return $ingestor_class;
+}
+
+
+/**
+ * Helper function for zip errors.
+ * @param int $error_number
+ */
+function ingestor_zip_error($error_number) {
+  static $errors = array(
+    "No error",
+    "Multi-disk zip archives not supported",
+    "Renaming temporary file failed",
+    "Closing zip archive failed",
+    "Seek error",
+    "Read error",
+    "Write error",
+    "CRC error",
+    "Containing zip archive was closed",
+    "No such file",
+    "File already exists",
+    "Can't open file",
+    "Failure to create temporary file",
+    "Zlib error",
+    "Malloc failure",
+    "Entry has been changed",
+    "Compression method not supported",
+    "Premature EOF",
+    "Invalid argument",
+    "Not a zip archive",
+    "Internal error",
+    "Zip archive inconsistent",
+    "Can't remove file",
+    "Entry has been deleted"
+  );
+  $message = isset($errors[$error_number]) ? $errors[$error_number] : 'Unknown error';
+  return t($message);
+}

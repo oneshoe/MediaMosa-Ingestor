@@ -1,0 +1,8 @@
+; $Id: ingestor_globber.info 250 2011-11-25 14:16:17Z joris.vaneijden $
+name = "Ingestor globber"
+description = "Tool for finding presentation export files and importing them into Ingestor."
+package = "MediaMosa - Ingestor"
+version = "7.x-1.0-beta1"
+core = 7.x
+
+configure = admin/config/media/ingestor_globber

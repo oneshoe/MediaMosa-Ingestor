@@ -1,0 +1,51 @@
+<?php
+
+/**
+ * @file
+ * P2g ingestor module
+ */
+
+/**
+ * Implements hook_ingestor_supported_types().
+ */
+function ingestor_p2g_ingestor_supported_types() {
+  return array(
+    'p2g' => array(
+      'title' => 'Prestentations 2Go',
+      'class' => 'P2gIngestor',
+    ),
+  );
+}
+
+/**
+ * Implements hook_ingestor_globber_root_file().
+ */
+function ingestor_p2g_ingestor_globber_root_file() {
+  return 'recordingdetails.xml';
+}
+
+/**
+ * Implements hook_ingestor_compatible_item().
+ * @param object $item An ingetsor job queue item.
+ */
+function ingestor_p2g_ingestor_compatible_item($item) {
+  if (isset($item->data->uri)) {
+    $zip = new ZipArchive();
+    $zip_file = $zip->open(drupal_realpath($item->data->uri));
+    if ($zip_file === TRUE) {
+      $previous = libxml_use_internal_errors(true);
+      try {
+        // @TODO: All examples had this file in them. There may or may not be others in the real world.
+        $xml = new SimpleXMLElement($zip->getFromName(ingestor_p2g_ingestor_globber_root_file()));
+      }
+      catch (Exception $e) {
+        $xml = FALSE;
+      }
+      libxml_use_internal_errors($previous);
+      if ($xml && isset($xml->header->identifier)) {
+        return 'P2gIngestor';
+      }
+    }
+  }
+  return FALSE;
+}

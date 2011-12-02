@@ -1,0 +1,28 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Install file for Ingestor.
+ */
+
+/**
+ * Implements hook_update_N().
+ */
+function ingestor_update_7001() {
+  drupal_flush_all_caches();
+  return 'Flushed Drupal caches for changes to menu items and hooks.';
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function ingestor_uninstall() {
+  // Remove variables from variables table.
+  $variables = db_delete('variable')
+    ->condition('name', db_like('ingestor_') . '%' . db_like('_profiles'), 'LIKE')
+    ->execute();
+
+  variable_del('ingestor_work_dir');
+  variable_del('ingestor_user_id');
+}

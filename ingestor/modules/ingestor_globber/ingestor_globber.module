@@ -1,0 +1,149 @@
+<?php
+
+/**
+ * @file
+ * Function for finding en processing presentations on shared drives.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function ingestor_globber_menu() {
+  /* test item
+  $items['ingestor/globber'] = array(
+    'title' => 'Globber',
+    'description' => 'Glob.',
+    'page callback' => 'ingestor_globber',
+    'access arguments' => array('process ingestor queue'),
+    'type' => MENU_CALLBACK,
+  );
+  */
+
+  $items['admin/config/media/ingestor_globber'] = array(
+    'title' => 'Ingestor globber',
+    'description' => 'Configure Ingestor Globber.',
+    'page callback' => 'drupal_get_form',
+    'file' => 'ingestor_globber.admin.inc',
+    'page arguments' => array('ingestor_globber_settings_form'),
+    'access arguments' => array('administer ingestor'),
+  );
+  return $items;
+}
+
+/**
+ * Implm,enets hook_cron().
+ */
+function ingestor_globber_cron() {
+  $directories = variable_get('ingestor_globber_dirs', array());
+  if (!empty($directories)) {
+    ingestor_globber($directories);
+  }
+}
+
+/**
+ * Globber callback.
+ */
+function ingestor_globber($directories = array()) {
+  $needles = module_invoke_all('ingestor_globber_root_file');
+  foreach ($directories as $directory) {
+    $result = ingestor_globber_find_files($needles, $directory);
+    foreach ($result as $source) {
+      if (is_dir($source)) {
+        if (is_writable($source)) {
+          $destination = $source . DIRECTORY_SEPARATOR . 'ingestor_upload.zip';
+          $status = ingestor_globber_zip($source, $destination);
+          if ($status !== FALSE) {
+            // Leave a marker file to avoid re-processing this directory.
+            touch($source . DIRECTORY_SEPARATOR . '.ingestor');
+          }
+        }
+      }
+      else {
+        $pathinfo = pathinfo($source);
+        if (drupal_substr($pathinfo['filename'], 0, 9) != '.ingestor' && isset($pathinfo['extension']) && drupal_strtolower($pathinfo['extension']) == 'zip') {
+          $destination = $source;
+          // Leave a marker file to avoid re-processing this file.
+          touch($pathinfo['dirname'] . DIRECTORY_SEPARATOR . '.ingestor.' . $pathinfo['filename'] . '.' . $pathinfo['extension']);
+        }
+      }
+      if (isset($destination) && file_exists($destination)) {
+        // Begin building file object.
+        global $user;
+        $file = new stdClass();
+        $file->user     = $user->uid;
+        $file->status   = 0;
+        $file->filename = trim(basename($destination), '.');
+        $file->uri      = $destination;
+        $file->filemime = file_get_mimetype($file->filename);
+        $queue = DrupalQueue::get('ingestor_jobs', TRUE);
+        $queue->createItem($file);
+      }
+    }
+  }
+}
+
+/**
+ * Find files anywhere in a directory where there is not already a processed zipfile.
+ * @param array $files Filenames to look for
+ * @param string $directory
+ */
+function ingestor_globber_find_files(&$files, $directory) {
+  $found = array();
+  if ($handle = opendir($directory)) {
+    while (($entry = readdir($handle)) !== FALSE) {
+      if ($entry !== '.' && $entry !== '..') {
+        $path = $directory . DIRECTORY_SEPARATOR . $entry;
+        if (is_dir($path)) {
+          if (file_exists($path . DIRECTORY_SEPARATOR . '.ingestor')) {
+            closedir($handle);
+            return FALSE;
+          }
+          $result = ingestor_globber_find_files($files, $path);
+          if (!empty($result)) {
+            $found = array_merge($result, $found);
+          }
+        }
+        if (in_array($entry, $files)) {
+          $found[] = $directory;
+        }
+        if ('zip' == drupal_strtolower(pathinfo($path, PATHINFO_EXTENSION)) && !file_exists($directory . DIRECTORY_SEPARATOR . '.ingestor.' . $entry)) {
+          $found[] = $path;
+        }
+      }
+    }
+    closedir($handle);
+  }
+  return $found;
+}
+
+/**
+ * Create a zipfile from a directory.
+ * @param string $source Directory
+ * @param string $destination Zipfile
+ */
+function ingestor_globber_zip($source, $destination) {
+  if (!extension_loaded('zip') || !file_exists($source)) {
+    return FALSE;
+  }
+  $zip = new ZipArchive();
+  if (! $zip->open($destination, ZIPARCHIVE::CREATE)) {
+    return FALSE;
+  }
+  $source = str_replace('\\', '/', realpath($source));
+  if (is_dir($source) === TRUE) {
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source), RecursiveIteratorIterator::SELF_FIRST);
+    foreach ($files as $file) {
+      $file = str_replace('\\', '/', realpath($file));
+      if (is_dir($file) === TRUE) {
+        $zip->addEmptyDir(str_replace($source . '/', '', $file . '/'));
+      }
+      elseif (is_file($file) === TRUE) {
+        $zip->addFromString(str_replace($source . '/', '', $file), file_get_contents($file));
+      }
+    }
+  }
+  elseif (is_file($source) === TRUE) {
+    $zip->addFromString(basename($source), file_get_contents($source));
+  }
+  return $zip->close();
+}

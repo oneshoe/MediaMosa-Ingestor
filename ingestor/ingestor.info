@@ -1,0 +1,14 @@
+; $Id: ingestor.info 248 2011-11-25 14:10:03Z joris.vaneijden $
+name = "Ingestor"
+description = "Tool for extracting presentation export files and import them into Mediamosa."
+package = "MediaMosa - Ingestor"
+version = "7.x-1.0-beta1"
+core = 7.x
+
+configure = admin/config/media/ingestor
+
+; Dependencies (module names)
+dependencies[] = mediamosa_connector
+
+; Used files.
+files[] = ingestor.class.inc

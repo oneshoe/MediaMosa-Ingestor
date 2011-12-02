@@ -1,0 +1,54 @@
+<?php
+
+/**
+ * @file
+ * Mediasite ingestor module
+ */
+
+/**
+ * Implements hook_ingestor_supported_types().
+ */
+function ingestor_mediasite_ingestor_supported_types() {
+  return array(
+    'mediasite' => array(
+      'title' => 'Mediasite',
+      'class' => 'MediasiteIngestor',
+    ),
+  );
+}
+
+/**
+ * Implements hook_ingestor_globber_root_file().
+ */
+function ingestor_mediasite_ingestor_globber_root_file() {
+  return 'MediasitePresentation_40.xml';
+}
+
+/**
+ * Implements hook_ingestor_compatible_item().
+ * @param object $item An ingetsor job queue item.
+ */
+function ingestor_mediasite_ingestor_compatible_item($item) {
+  if (isset($item->data->uri)) {
+    $zip = new ZipArchive();
+    $zip_file = $zip->open(drupal_realpath($item->data->uri));
+    if ($zip_file === TRUE) {
+      // @TODO: All examples had this file in them. There may or may not be others in the real world.
+      $entries = Ingestor::getIndexFromZip($zip, ingestor_mediasite_ingestor_globber_root_file());
+      if (!empty($entries)) {
+        $previous = libxml_use_internal_errors(true);
+        try {
+          $xml = new SimpleXMLElement($zip->getFromName(reset($entries)));
+        }
+        catch (Exception $e) {
+          $xml = FALSE;
+        }
+        libxml_use_internal_errors($previous);
+        if ($xml && isset($xml->Properties->PresentationId)) {
+          return 'MediasiteIngestor';
+        }
+      }
+    }
+  }
+  return FALSE;
+}

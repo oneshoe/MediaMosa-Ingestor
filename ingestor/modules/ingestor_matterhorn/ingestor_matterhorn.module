@@ -1,0 +1,41 @@
+<?php
+
+/**
+ * @file
+ * Matterhorn ingestor module
+ */
+
+/**
+ * Implements hook_ingestor_supported_types().
+ */
+function ingestor_matterhorn_ingestor_supported_types() {
+  return array(
+    'matterhorn' => array(
+      'title' => 'Matterhorn',
+      'class' => 'MatterhornIngestor',
+    ),
+  );
+}
+
+/**
+ * Implements hook_ingestor_compatible_item().
+ * @param object $item An ingetsor job queue item.
+ */
+function ingestor_matterhorn_ingestor_compatible_item($item) {
+  // Check if this is a valid xml file with entries in it.
+  // @TODO: make this more matterhorn specific. Currently almost any atom xml file is accepted for matterhorn.
+  if (isset($item->data->uri)) {
+    $previous = libxml_use_internal_errors(true);
+    try {
+      $xml = new SimpleXMLElement($item->data->uri, NULL, TRUE);
+    }
+    catch (Exception $e) {
+      $xml = FALSE;
+    }
+    libxml_use_internal_errors($previous);
+    if ($xml && count($xml->entry)) {
+      return 'MatterhornIngestor';
+    }
+  }
+  return FALSE;
+}
