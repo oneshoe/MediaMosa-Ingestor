@@ -40,14 +40,49 @@ More information on MediaSite: http://www.sonicfoundry.com/mediasite
 
 ===============================================================================
 
+Requirements:
+- A Drupal 7 installation. (http://drupal.org/start)
+- The mediamosa_connector module from the mediamosa_sdk
+  (https://github.com/mediamosa/mediamosa-sdk/zipball/7.x-1.0).
+- Valid login details for a MediaMosa server.
+
+Installation:
+- Copy the Ingestor folder to your Drupal installation in sites/all/modules/ or
+  one of its sub-folders.
+- Log in as administrator to your Drupal installation.
+- Navigate to http://yoursite/admin/config/media/mediamosa/connector and enter
+  your MediaMosa server connection details.
+- Go to http://yoursite/admin/modules and enable the Ingestor module and all
+  the Ingestor modules you plan to use.
+- Navigate to http://yoursite/admin/config/media/ingestor and enter the
+  MediaMosa user ID to use.
+- If you change the working directory you have to make sure it is writable by
+  the webserver.
+- On the same page you have to configure which transcoding profiles have to be
+  used by MediaMosa on the uploaded content.
+
+Usage:
+- Go to http://yoursite/ingestor
+- Upload a zip file with a presentation in it or an atom xml file referencing
+  content to upload.
+- Every time cron runs (http://drupal.org/cron) an item from the queue will be
+  processed.
+- On the Ingestor page you can also start processing of the queue manually.
+
+Logging:
+- Information is logged as type 'ingestor' at
+  http://yoursite/admin/reports/dblog
+
+===============================================================================
+
 This project was initiated by the University of Groningen (http://www.rug.nl),
 funded by a programme from SURFnet (http://www.surfnet.nl) for MediaMosa and
 developed by One Shoe (http://www.oneshoe.nl). More information on MediaMosa
 can be found at: http://www.mediamosa.org
 
 You can use this module in tandem with a (separate) front-end application based
-on Drupal 7 using the MediaMosa-Player (https://github.com/oneshoe/MediaMosa-Player)
-for web lectures.
+on Drupal 7 using the MediaMosa-Player
+(https://github.com/oneshoe/MediaMosa-Player) for web lectures.
 
 ===============================================================================
 Future development of this functionality is intended to provide a more stable,
